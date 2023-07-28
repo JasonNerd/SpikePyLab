@@ -5,3 +5,13 @@
 .precomp
 lib/.precomp
 
+.idea/
+*.iml
+*.log
+*.html
+
+# 非公开数据
+data/
+devLogs/
+grpConferrence/
+
