@@ -1,117 +1,91 @@
-# -*- coding: utf-8 -*-
-"""
-Collection of classes used for reading headers and data from Blackrock files
-current version: 1.3.2 --- 08/12/2016
 
-@author: Mitch Frankel - Blackrock Microsystems
-	 Stephen Hou - v1.4.0 edits
-
-Version History:
-v1.0.0 - 07/05/2016 - initial release - requires brMiscFxns v1.0.0
-v1.1.0 - 07/08/2016 - inclusion of NsxFile.savesubsetnsx() for saving subset of Nsx data to disk4
-v1.1.1 - 07/09/2016 - update to NsxFile.savesubsetnsx() for option (not)overwriting subset files if already exist
-                      bug fixes in NsxFile class as reported from beta user
-v1.2.0 - 07/12/2016 - bug fixes in NsxFile.savesubsetnsx()
-                      added version control and checking for brMiscFxns
-                      requires brMiscFxns v1.1.0
-v1.3.0 - 07/22/2016 - added 'samp_per_s' to NsxFile.getdata() output
-                      added close() method to NsxFile and NevFile objects
-                      NsxFile.getdata() now pre-allocates output['data'] as zeros - speed and safety
-v1.3.1 - 08/02/2016 - bug fixes to NsxFile.getdata() for usability with Python 2.7 as reported from beta user
-                      patch for use with multiple NSP sync (overwriting of initial null data from initial data packet)
-                      __future__ import for use with Python 2.7 (division)
-                      minor modifications to allow use of Python 2.6+
-v1.3.2 - 08/12/2016 - bug fixes to NsXFile.getdata()
-v1.4.0 - 06/22/2017 - inclusion of wave_read parameter to NevFile.getdata() for including/excluding waveform data
-
-"""
-
-
-from __future__  import division  # for those using Python 2.6+
-import numpy     as np
+from __future__ import division  # for those using Python 2.6+
+import numpy as np
 from collections import namedtuple
-from datetime    import datetime
-from math        import ceil
-from os          import path as ospath
-from struct      import calcsize, pack, unpack, unpack_from
-from brMiscFxns  import openfilecheck, brmiscfxns_ver
+from datetime import datetime
+from math import ceil
+from os import path as ospath
+from struct import calcsize, pack, unpack, unpack_from
+from brMiscFxns import openfilecheck, brmiscfxns_ver
 
 # Version control set/check
-brpylib_ver        = "1.3.2"
+brpylib_ver = "1.3.2"
 brmiscfxns_ver_req = "1.2.0"
 if brmiscfxns_ver.split('.') < brmiscfxns_ver_req.split('.'):
     raise Exception("brpylib requires brMiscFxns " + brmiscfxns_ver_req + " or higher, please use latest version")
 
 # Patch for use with Python 2.6+
-try: input = raw_input
-except NameError: pass
+try:
+    input = raw_input
+except NameError:
+    pass
 
 # Define global variables to remove magic numbers
 # <editor-fold desc="Globals">
-WARNING_SLEEP_TIME      = 5
-DATA_PAGING_SIZE        = 1024**3
-DATA_FILE_SIZE_MIN      = 1024**2 * 10
-STRING_TERMINUS         = '\x00'
-UNDEFINED               = 0
-ELEC_ID_DEF             = 'all'
-START_TIME_DEF          = 0
-DATA_TIME_DEF           = 'all'
-DOWNSAMPLE_DEF          = 1
-START_OFFSET_MIN        = 0
-STOP_OFFSET_MIN         = 0
+WARNING_SLEEP_TIME = 5
+DATA_PAGING_SIZE = 1024 ** 3
+DATA_FILE_SIZE_MIN = 1024 ** 2 * 10
+STRING_TERMINUS = '\x00'
+UNDEFINED = 0
+ELEC_ID_DEF = 'all'
+START_TIME_DEF = 0
+DATA_TIME_DEF = 'all'
+DOWNSAMPLE_DEF = 1
+START_OFFSET_MIN = 0
+STOP_OFFSET_MIN = 0
 
-UV_PER_BIT_21             = 0.25
-WAVEFORM_SAMPLES_21       = 48
+UV_PER_BIT_21 = 0.25
+WAVEFORM_SAMPLES_21 = 48
 NSX_BASIC_HEADER_BYTES_22 = 314
-NSX_EXT_HEADER_BYTES_22   = 66
-DATA_BYTE_SIZE            = 2
-TIMESTAMP_NULL_21         = 0
+NSX_EXT_HEADER_BYTES_22 = 66
+DATA_BYTE_SIZE = 2
+TIMESTAMP_NULL_21 = 0
 
-NO_FILTER               = 0
-BUTTER_FILTER           = 1
-SERIAL_MODE             = 0
+NO_FILTER = 0
+BUTTER_FILTER = 1
+SERIAL_MODE = 0
 
-RB2D_MARKER             = 1
-RB2D_BLOB               = 2
-RB3D_MARKER             = 3
-BOUNDARY_2D             = 4
-MARKER_SIZE             = 5
+RB2D_MARKER = 1
+RB2D_BLOB = 2
+RB3D_MARKER = 3
+BOUNDARY_2D = 4
+MARKER_SIZE = 5
 
-DIGITAL_PACKET_ID       = 0
-NEURAL_PACKET_ID_MIN    = 1
-NEURAL_PACKET_ID_MAX    = 2048
-COMMENT_PACKET_ID       = 65535
-VIDEO_SYNC_PACKET_ID    = 65534
-TRACKING_PACKET_ID      = 65533
-BUTTON_PACKET_ID        = 65532
+DIGITAL_PACKET_ID = 0
+NEURAL_PACKET_ID_MIN = 1
+NEURAL_PACKET_ID_MAX = 2048
+COMMENT_PACKET_ID = 65535
+VIDEO_SYNC_PACKET_ID = 65534
+TRACKING_PACKET_ID = 65533
+BUTTON_PACKET_ID = 65532
 CONFIGURATION_PACKET_ID = 65531
 
-PARALLEL_REASON         = 1
-PERIODIC_REASON         = 64
-SERIAL_REASON           = 129
-LOWER_BYTE_MASK         = 255
-FIRST_BIT_MASK          = 1
-SECOND_BIT_MASK         = 2
+PARALLEL_REASON = 1
+PERIODIC_REASON = 64
+SERIAL_REASON = 129
+LOWER_BYTE_MASK = 255
+FIRST_BIT_MASK = 1
+SECOND_BIT_MASK = 2
 
-CLASSIFIER_MIN          = 1
-CLASSIFIER_MAX          = 16
-CLASSIFIER_NOISE        = 255
+CLASSIFIER_MIN = 1
+CLASSIFIER_MAX = 16
+CLASSIFIER_NOISE = 255
 
-CHARSET_ANSI            = 0
-CHARSET_UTF             = 1
-CHARSET_ROI             = 255
+CHARSET_ANSI = 0
+CHARSET_UTF = 1
+CHARSET_ROI = 255
 
-COMM_RGBA               = 0
-COMM_TIME               = 1
+COMM_RGBA = 0
+COMM_TIME = 1
 
-BUTTON_PRESS            = 1
-BUTTON_RESET            = 2
+BUTTON_PRESS = 1
+BUTTON_RESET = 2
 
-CHG_NORMAL              = 0
-CHG_CRITICAL            = 1
+CHG_NORMAL = 0
+CHG_CRITICAL = 1
 
-ENTER_EVENT             = 1
-EXIT_EVENT              = 2
+ENTER_EVENT = 1
+EXIT_EVENT = 2
 # </editor-fold>
 
 # Define a named tuple that has information about header/packet fields
@@ -144,7 +118,7 @@ def processheaders(curr_file, packet_fields):
     # is read as ints 2 and 3 but I want it as '2.3'
     packet_unpacked = unpack(packet_format_str, packet_binary)
 
-    # Create a iterator from the data list.  This allows a formatting function
+    # Create an iterator from the data list.  This allows a formatting function
     # to use more than one item from the list if needed, and the next formatting
     # function can pick up on the correct item in the list
     data_iter = iter(packet_unpacked)
@@ -164,13 +138,13 @@ def format_filespec(header_list):
 
 
 def format_timeorigin(header_list):
-    year        = next(header_list)
-    month       = next(header_list)
-    _           = next(header_list)
-    day         = next(header_list)
-    hour        = next(header_list)
-    minute      = next(header_list)
-    second      = next(header_list)
+    year = next(header_list)
+    month = next(header_list)
+    _ = next(header_list)
+    day = next(header_list)
+    hour = next(header_list)
+    minute = next(header_list)
+    second = next(header_list)
     millisecond = next(header_list)
     return datetime(year, month, day, hour, minute, second, millisecond * 1000)
 
@@ -190,8 +164,10 @@ def format_freq(header_list):
 
 def format_filter(header_list):
     filter_type = next(header_list)
-    if filter_type == NO_FILTER:        return "none"
-    elif filter_type == BUTTER_FILTER:  return "butterworth"
+    if filter_type == NO_FILTER:
+        return "none"
+    elif filter_type == BUTTER_FILTER:
+        return "butterworth"
 
 
 def format_charstring(header_list):
@@ -200,152 +176,169 @@ def format_charstring(header_list):
 
 def format_digconfig(header_list):
     config = next(header_list) & FIRST_BIT_MASK
-    if config: return 'active'
-    else:      return 'ignored'
+    if config:
+        return 'active'
+    else:
+        return 'ignored'
 
 
 def format_anaconfig(header_list):
     config = next(header_list)
     if config & FIRST_BIT_MASK:  return 'low_to_high'
-    if config & SECOND_BIT_MASK: return 'high_to_low'
-    else:                        return 'none'
+    if config & SECOND_BIT_MASK:
+        return 'high_to_low'
+    else:
+        return 'none'
 
 
 def format_digmode(header_list):
     dig_mode = next(header_list)
-    if dig_mode == SERIAL_MODE: return 'serial'
-    else:                       return 'parallel'
+    if dig_mode == SERIAL_MODE:
+        return 'serial'
+    else:
+        return 'parallel'
 
 
 def format_trackobjtype(header_list):
     trackobj_type = next(header_list)
-    if   trackobj_type == UNDEFINED:    return 'undefined'
-    elif trackobj_type == RB2D_MARKER:  return '2D RB markers'
-    elif trackobj_type == RB2D_BLOB:    return '2D RB blob'
-    elif trackobj_type == RB3D_MARKER:  return '3D RB markers'
-    elif trackobj_type == BOUNDARY_2D:  return '2D boundary'
-    elif trackobj_type == MARKER_SIZE:  return 'marker size'
-    else:                               return 'error'
+    if trackobj_type == UNDEFINED:
+        return 'undefined'
+    elif trackobj_type == RB2D_MARKER:
+        return '2D RB markers'
+    elif trackobj_type == RB2D_BLOB:
+        return '2D RB blob'
+    elif trackobj_type == RB3D_MARKER:
+        return '3D RB markers'
+    elif trackobj_type == BOUNDARY_2D:
+        return '2D boundary'
+    elif trackobj_type == MARKER_SIZE:
+        return 'marker size'
+    else:
+        return 'error'
 
 
 def getdigfactor(ext_headers, idx):
-    max_analog  = ext_headers[idx]['MaxAnalogValue']
-    min_analog  = ext_headers[idx]['MinAnalogValue']
+    max_analog = ext_headers[idx]['MaxAnalogValue']
+    min_analog = ext_headers[idx]['MinAnalogValue']
     max_digital = ext_headers[idx]['MaxDigitalValue']
     min_digital = ext_headers[idx]['MinDigitalValue']
     return float(max_analog - min_analog) / float(max_digital - min_digital)
+
+
 # </editor-fold>
 
 
 # <editor-fold desc="Header dictionaries">
 nev_header_dict = {
-    'basic': [FieldDef('FileTypeID',            '8s',   format_stripstring),    # 8 bytes   - 8 char array
-              FieldDef('FileSpec',              '2B',   format_filespec),       # 2 bytes   - 2 unsigned char
-              FieldDef('AddFlags',              'H',    format_none),           # 2 bytes   - uint16
-              FieldDef('BytesInHeader',         'I',    format_none),           # 4 bytes   - uint32
-              FieldDef('BytesInDataPackets',    'I',    format_none),           # 4 bytes   - uint32
-              FieldDef('TimeStampResolution',   'I',    format_none),           # 4 bytes   - uint32
-              FieldDef('SampleTimeResolution',  'I',    format_none),           # 4 bytes   - uint32
-              FieldDef('TimeOrigin',            '8H',   format_timeorigin),     # 16 bytes  - 8 x uint16
-              FieldDef('CreatingApplication',   '32s',  format_stripstring),    # 32 bytes  - 32 char array
-              FieldDef('Comment',               '256s', format_stripstring),    # 256 bytes - 256 char array
-              FieldDef('NumExtendedHeaders',    'I',    format_none)],          # 4 bytes   - uint32
+    'basic': [FieldDef('FileTypeID', '8s', format_stripstring),  # 8 bytes   - 8 char array
+              FieldDef('FileSpec', '2B', format_filespec),  # 2 bytes   - 2 unsigned char
+              FieldDef('AddFlags', 'H', format_none),  # 2 bytes   - uint16
+              FieldDef('BytesInHeader', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('BytesInDataPackets', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('TimeStampResolution', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('SampleTimeResolution', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('TimeOrigin', '8H', format_timeorigin),  # 16 bytes  - 8 x uint16
+              FieldDef('CreatingApplication', '32s', format_stripstring),  # 32 bytes  - 32 char array
+              FieldDef('Comment', '256s', format_stripstring),  # 256 bytes - 256 char array
+              FieldDef('NumExtendedHeaders', 'I', format_none)],  # 4 bytes   - uint32
 
-    'ARRAYNME': FieldDef('ArrayName',           '24s',  format_stripstring),    # 24 bytes  - 24 char array
-    'ECOMMENT': FieldDef('ExtraComment',        '24s',  format_stripstring),    # 24 bytes  - 24 char array
-    'CCOMMENT': FieldDef('ContComment',         '24s',  format_stripstring),    # 24 bytes  - 24 char array
-    'MAPFILE':  FieldDef('MapFile',             '24s',  format_stripstring),    # 24 bytes  - 24 char array
+    'ARRAYNME': FieldDef('ArrayName', '24s', format_stripstring),  # 24 bytes  - 24 char array
+    'ECOMMENT': FieldDef('ExtraComment', '24s', format_stripstring),  # 24 bytes  - 24 char array
+    'CCOMMENT': FieldDef('ContComment', '24s', format_stripstring),  # 24 bytes  - 24 char array
+    'MAPFILE': FieldDef('MapFile', '24s', format_stripstring),  # 24 bytes  - 24 char array
 
-    'NEUEVWAV': [FieldDef('ElectrodeID',        'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('PhysicalConnector',  'B',    format_charstring),     # 1 byte   - 1 unsigned char
-                 FieldDef('ConnectorPin',       'B',    format_charstring),     # 1 byte   - 1 unsigned char
-                 FieldDef('DigitizationFactor', 'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('EnergyThreshold',    'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('HighThreshold',      'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('LowThreshold',       'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('NumSortedUnits',     'B',    format_charstring),     # 1 byte   - 1 unsigned char
-                 FieldDef('BytesPerWaveform',   'B',    format_charstring),     # 1 byte   - 1 unsigned char
-                 FieldDef('SpikeWidthSamples',  'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('EmptyBytes',         '8s',   format_none)],          # 8 bytes  - empty
+    'NEUEVWAV': [FieldDef('ElectrodeID', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('PhysicalConnector', 'B', format_charstring),  # 1 byte   - 1 unsigned char
+                 FieldDef('ConnectorPin', 'B', format_charstring),  # 1 byte   - 1 unsigned char
+                 FieldDef('DigitizationFactor', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('EnergyThreshold', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('HighThreshold', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('LowThreshold', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('NumSortedUnits', 'B', format_charstring),  # 1 byte   - 1 unsigned char
+                 FieldDef('BytesPerWaveform', 'B', format_charstring),  # 1 byte   - 1 unsigned char
+                 FieldDef('SpikeWidthSamples', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('EmptyBytes', '8s', format_none)],  # 8 bytes  - empty
 
-    'NEUEVLBL': [FieldDef('ElectrodeID',        'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('Label',              '16s',  format_stripstring),    # 16 bytes - 16 char array
-                 FieldDef('EmptyBytes',         '6s',   format_none)],          # 6 bytes  - empty
+    'NEUEVLBL': [FieldDef('ElectrodeID', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('Label', '16s', format_stripstring),  # 16 bytes - 16 char array
+                 FieldDef('EmptyBytes', '6s', format_none)],  # 6 bytes  - empty
 
-    'NEUEVFLT': [FieldDef('ElectrodeID',        'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('HighFreqCorner',     'I',    format_freq),           # 4 bytes  - uint32
-                 FieldDef('HighFreqOrder',      'I',    format_none),           # 4 bytes  - uint32
-                 FieldDef('HighFreqType',       'H',    format_filter),         # 2 bytes  - uint16
-                 FieldDef('LowFreqCorner',      'I',    format_freq),           # 4 bytes  - uint32
-                 FieldDef('LowFreqOrder',       'I',    format_none),           # 4 bytes  - uint32
-                 FieldDef('LowFreqType',        'H',    format_filter),         # 2 bytes  - uint16
-                 FieldDef('EmptyBytes',         '2s',   format_none)],          # 2 bytes  - empty
+    'NEUEVFLT': [FieldDef('ElectrodeID', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('HighFreqCorner', 'I', format_freq),  # 4 bytes  - uint32
+                 FieldDef('HighFreqOrder', 'I', format_none),  # 4 bytes  - uint32
+                 FieldDef('HighFreqType', 'H', format_filter),  # 2 bytes  - uint16
+                 FieldDef('LowFreqCorner', 'I', format_freq),  # 4 bytes  - uint32
+                 FieldDef('LowFreqOrder', 'I', format_none),  # 4 bytes  - uint32
+                 FieldDef('LowFreqType', 'H', format_filter),  # 2 bytes  - uint16
+                 FieldDef('EmptyBytes', '2s', format_none)],  # 2 bytes  - empty
 
-    'DIGLABEL': [FieldDef('Label',              '16s',  format_stripstring),    # 16 bytes - 16 char array
-                 FieldDef('Mode',               '?',    format_digmode),        # 1 byte   - boolean
-                 FieldDef('EmptyBytes',         '7s',   format_none)],          # 7 bytes  - empty
+    'DIGLABEL': [FieldDef('Label', '16s', format_stripstring),  # 16 bytes - 16 char array
+                 FieldDef('Mode', '?', format_digmode),  # 1 byte   - boolean
+                 FieldDef('EmptyBytes', '7s', format_none)],  # 7 bytes  - empty
 
-    'NSASEXEV': [FieldDef('Frequency',          'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('DigitalInputConfig', 'B',    format_digconfig),      # 1 byte   - 1 unsigned char
-                 FieldDef('AnalogCh1Config',    'B',    format_anaconfig),      # 1 byte   - 1 unsigned char
-                 FieldDef('AnalogCh1DetectVal', 'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('AnalogCh2Config',    'B',    format_anaconfig),      # 1 byte   - 1 unsigned char
-                 FieldDef('AnalogCh2DetectVal', 'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('AnalogCh3Config',    'B',    format_anaconfig),      # 1 byte   - 1 unsigned char
-                 FieldDef('AnalogCh3DetectVal', 'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('AnalogCh4Config',    'B',    format_anaconfig),      # 1 byte   - 1 unsigned char
-                 FieldDef('AnalogCh4DetectVal', 'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('AnalogCh5Config',    'B',    format_anaconfig),      # 1 byte   - 1 unsigned char
-                 FieldDef('AnalogCh5DetectVal', 'h',    format_none),           # 2 bytes  - int16
-                 FieldDef('EmptyBytes',         '6s',   format_none)],          # 2 bytes  - empty
+    'NSASEXEV': [FieldDef('Frequency', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('DigitalInputConfig', 'B', format_digconfig),  # 1 byte   - 1 unsigned char
+                 FieldDef('AnalogCh1Config', 'B', format_anaconfig),  # 1 byte   - 1 unsigned char
+                 FieldDef('AnalogCh1DetectVal', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('AnalogCh2Config', 'B', format_anaconfig),  # 1 byte   - 1 unsigned char
+                 FieldDef('AnalogCh2DetectVal', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('AnalogCh3Config', 'B', format_anaconfig),  # 1 byte   - 1 unsigned char
+                 FieldDef('AnalogCh3DetectVal', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('AnalogCh4Config', 'B', format_anaconfig),  # 1 byte   - 1 unsigned char
+                 FieldDef('AnalogCh4DetectVal', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('AnalogCh5Config', 'B', format_anaconfig),  # 1 byte   - 1 unsigned char
+                 FieldDef('AnalogCh5DetectVal', 'h', format_none),  # 2 bytes  - int16
+                 FieldDef('EmptyBytes', '6s', format_none)],  # 2 bytes  - empty
 
-    'VIDEOSYN': [FieldDef('VideoSourceID',      'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('VideoSource',        '16s',  format_stripstring),    # 16 bytes - 16 char array
-                 FieldDef('FrameRate',          'f',    format_none),           # 4 bytes  - single float
-                 FieldDef('EmptyBytes',         '2s',   format_none)],          # 2 bytes  - empty
+    'VIDEOSYN': [FieldDef('VideoSourceID', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('VideoSource', '16s', format_stripstring),  # 16 bytes - 16 char array
+                 FieldDef('FrameRate', 'f', format_none),  # 4 bytes  - single float
+                 FieldDef('EmptyBytes', '2s', format_none)],  # 2 bytes  - empty
 
-    'TRACKOBJ': [FieldDef('TrackableType',      'H',    format_trackobjtype),   # 2 bytes  - uint16
-                 FieldDef('TrackableID',        'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('PointCount',         'H',    format_none),           # 2 bytes  - uint16
-                 FieldDef('VideoSource',        '16s',  format_stripstring),    # 16 bytes - 16 char array
-                 FieldDef('EmptyBytes',         '2s',   format_none)]           # 2 bytes  - empty
+    'TRACKOBJ': [FieldDef('TrackableType', 'H', format_trackobjtype),  # 2 bytes  - uint16
+                 FieldDef('TrackableID', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('PointCount', 'H', format_none),  # 2 bytes  - uint16
+                 FieldDef('VideoSource', '16s', format_stripstring),  # 16 bytes - 16 char array
+                 FieldDef('EmptyBytes', '2s', format_none)]  # 2 bytes  - empty
 }
 
 nsx_header_dict = {
-    'basic_21': [FieldDef('Label',              '16s', format_stripstring),   # 16 bytes  - 16 char array
-                 FieldDef('Period',             'I',   format_none),          # 4 bytes   - uint32
-                 FieldDef('ChannelCount',       'I',   format_none)],         # 4 bytes   - uint32
+    'basic_21': [FieldDef('Label', '16s', format_stripstring),  # 16 bytes  - 16 char array
+                 FieldDef('Period', 'I', format_none),  # 4 bytes   - uint32
+                 FieldDef('ChannelCount', 'I', format_none)],  # 4 bytes   - uint32
 
-    'basic': [FieldDef('FileSpec',              '2B',   format_filespec),     # 2 bytes   - 2 unsigned char
-              FieldDef('BytesInHeader',         'I',    format_none),         # 4 bytes   - uint32
-              FieldDef('Label',                 '16s',  format_stripstring),  # 16 bytes  - 16 char array
-              FieldDef('Comment',               '256s', format_stripstring),  # 256 bytes - 256 char array
-              FieldDef('Period',                'I',    format_none),         # 4 bytes   - uint32
-              FieldDef('TimeStampResolution',   'I',    format_none),         # 4 bytes   - uint32
-              FieldDef('TimeOrigin',            '8H',   format_timeorigin),   # 16 bytes  - 8 uint16
-              FieldDef('ChannelCount',          'I',    format_none)],        # 4 bytes   - uint32
+    'basic': [FieldDef('FileSpec', '2B', format_filespec),  # 2 bytes   - 2 unsigned char
+              FieldDef('BytesInHeader', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('Label', '16s', format_stripstring),  # 16 bytes  - 16 char array
+              FieldDef('Comment', '256s', format_stripstring),  # 256 bytes - 256 char array
+              FieldDef('Period', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('TimeStampResolution', 'I', format_none),  # 4 bytes   - uint32
+              FieldDef('TimeOrigin', '8H', format_timeorigin),  # 16 bytes  - 8 uint16
+              FieldDef('ChannelCount', 'I', format_none)],  # 4 bytes   - uint32
 
-    'extended': [FieldDef('Type',               '2s',   format_stripstring),  # 2 bytes   - 2 char array
-                 FieldDef('ElectrodeID',        'H',    format_none),         # 2 bytes   - uint16
-                 FieldDef('ElectrodeLabel',     '16s',  format_stripstring),  # 16 bytes  - 16 char array
-                 FieldDef('PhysicalConnector',  'B',    format_none),         # 1 byte    - uint8
-                 FieldDef('ConnectorPin',       'B',    format_none),         # 1 byte    - uint8
-                 FieldDef('MinDigitalValue',    'h',    format_none),         # 2 bytes   - int16
-                 FieldDef('MaxDigitalValue',    'h',    format_none),         # 2 bytes   - int16
-                 FieldDef('MinAnalogValue',     'h',    format_none),         # 2 bytes   - int16
-                 FieldDef('MaxAnalogValue',     'h',    format_none),         # 2 bytes   - int16
-                 FieldDef('Units',              '16s',  format_stripstring),  # 16 bytes  - 16 char array
-                 FieldDef('HighFreqCorner',     'I',    format_freq),         # 4 bytes   - uint32
-                 FieldDef('HighFreqOrder',      'I',    format_none),         # 4 bytes   - uint32
-                 FieldDef('HighFreqType',       'H',    format_filter),       # 2 bytes   - uint16
-                 FieldDef('LowFreqCorner',      'I',    format_freq),         # 4 bytes   - uint32
-                 FieldDef('LowFreqOrder',       'I',    format_none),         # 4 bytes   - uint32
-                 FieldDef('LowFreqType',        'H',    format_filter)],      # 2 bytes   - uint16
+    'extended': [FieldDef('Type', '2s', format_stripstring),  # 2 bytes   - 2 char array
+                 FieldDef('ElectrodeID', 'H', format_none),  # 2 bytes   - uint16
+                 FieldDef('ElectrodeLabel', '16s', format_stripstring),  # 16 bytes  - 16 char array
+                 FieldDef('PhysicalConnector', 'B', format_none),  # 1 byte    - uint8
+                 FieldDef('ConnectorPin', 'B', format_none),  # 1 byte    - uint8
+                 FieldDef('MinDigitalValue', 'h', format_none),  # 2 bytes   - int16
+                 FieldDef('MaxDigitalValue', 'h', format_none),  # 2 bytes   - int16
+                 FieldDef('MinAnalogValue', 'h', format_none),  # 2 bytes   - int16
+                 FieldDef('MaxAnalogValue', 'h', format_none),  # 2 bytes   - int16
+                 FieldDef('Units', '16s', format_stripstring),  # 16 bytes  - 16 char array
+                 FieldDef('HighFreqCorner', 'I', format_freq),  # 4 bytes   - uint32
+                 FieldDef('HighFreqOrder', 'I', format_none),  # 4 bytes   - uint32
+                 FieldDef('HighFreqType', 'H', format_filter),  # 2 bytes   - uint16
+                 FieldDef('LowFreqCorner', 'I', format_freq),  # 4 bytes   - uint32
+                 FieldDef('LowFreqOrder', 'I', format_none),  # 4 bytes   - uint32
+                 FieldDef('LowFreqType', 'H', format_filter)],  # 2 bytes   - uint16
 
-    'data': [FieldDef('Header',                 'B',    format_none),         # 1 byte    - uint8
-             FieldDef('Timestamp',              'I',    format_none),         # 4 bytes   - uint32
-             FieldDef('NumDataPoints',          'I',    format_none)]         # 4 bytes   - uint32]
+    'data': [FieldDef('Header', 'B', format_none),  # 1 byte    - uint8
+             FieldDef('Timestamp', 'I', format_none),  # 4 bytes   - uint32
+             FieldDef('NumDataPoints', 'I', format_none)]  # 4 bytes   - uint32]
 }
+
+
 # </editor-fold>
 
 
@@ -356,8 +349,10 @@ def check_elecid(elec_ids):
         print("      Setting elec_ids to 'all'")
         elec_ids = ELEC_ID_DEF
     if elec_ids != ELEC_ID_DEF and type(elec_ids) is not list:
-        if type(elec_ids) == range: elec_ids = list(elec_ids)
-        elif type(elec_ids) == int: elec_ids = [elec_ids]
+        if type(elec_ids) == range:
+            elec_ids = list(elec_ids)
+        elif type(elec_ids) == int:
+            elec_ids = [elec_ids]
     return elec_ids
 
 
@@ -387,7 +382,7 @@ def check_downsample(downsample):
 
 def check_dataelecid(elec_ids, all_elec_ids):
     unique_elec_ids = set(elec_ids)
-    all_elec_ids    = set(all_elec_ids)
+    all_elec_ids = set(all_elec_ids)
 
     # if some electrodes asked for don't exist, reset list with those that do, or throw error and return
     if not unique_elec_ids.issubset(all_elec_ids):
@@ -408,6 +403,8 @@ def check_filesize(file_size):
         return DATA_FILE_SIZE_MIN
     else:
         return int(file_size)
+
+
 # </editor-fold>
 
 
@@ -418,8 +415,8 @@ class NevFile:
     """
 
     def __init__(self, datafile=''):
-        self.datafile         = datafile
-        self.basic_header     = {}
+        self.datafile = datafile
+        self.basic_header = {}
         self.extended_headers = []
 
         # Run openfilecheck and open the file passed or allow user to browse to one
@@ -470,11 +467,11 @@ class NevFile:
         while self.datafile.tell() != ospath.getsize(self.datafile.name):
 
             time_stamp = unpack('<I', self.datafile.read(4))[0]
-            packet_id  = unpack('<H', self.datafile.read(2))[0]
+            packet_id = unpack('<H', self.datafile.read(2))[0]
 
             # skip unwanted neural data packets if only asking for certain channels
-            if not (elec_ids == 'all' or ( (packet_id in elec_ids) and
-                                           NEURAL_PACKET_ID_MIN <= packet_id <= NEURAL_PACKET_ID_MAX )):
+            if not (elec_ids == 'all' or ((packet_id in elec_ids) and
+                                          NEURAL_PACKET_ID_MIN <= packet_id <= NEURAL_PACKET_ID_MAX)):
                 self.datafile.seek(self.basic_header['BytesInDataPackets'] - 6, 1)
                 continue
 
@@ -487,10 +484,14 @@ class NevFile:
                     output['dig_events'] = {'Reason': [], 'TimeStamps': [], 'Data': []}
 
                 reason = unpack('B', self.datafile.read(1))[0]
-                if   reason == PARALLEL_REASON: reason = 'parallel'
-                elif reason == PERIODIC_REASON: reason = 'periodic'
-                elif reason == SERIAL_REASON:   reason = 'serial'
-                else:                           reason = 'unknown'
+                if reason == PARALLEL_REASON:
+                    reason = 'parallel'
+                elif reason == PERIODIC_REASON:
+                    reason = 'periodic'
+                elif reason == SERIAL_REASON:
+                    reason = 'serial'
+                else:
+                    reason = 'unknown'
                 self.datafile.seek(1, 1)
 
                 # Check if this type of data already exists, if not, create an empty list, and then append data
@@ -529,10 +530,14 @@ class NevFile:
                                               'NEUEVWAV_HeaderIndices': [], 'Classification': [], 'Waveforms': []}
 
                 classifier = unpack('B', self.datafile.read(1))[0]
-                if classifier == UNDEFINED:          classifier = 'none'
-                elif CLASSIFIER_MIN <= classifier <= CLASSIFIER_MAX: classifier = classifier
-                elif classifier == CLASSIFIER_NOISE: classifier = 'noise'
-                else:                                classifier = 'error'
+                if classifier == UNDEFINED:
+                    classifier = 'none'
+                elif CLASSIFIER_MIN <= classifier <= CLASSIFIER_MAX:
+                    classifier = classifier
+                elif classifier == CLASSIFIER_NOISE:
+                    classifier = 'noise'
+                else:
+                    classifier = 'error'
                 self.datafile.seek(1, 1)
 
                 # Check if data for this electrode exists and update parameters accordingly
@@ -554,28 +559,32 @@ class NevFile:
 
                 # Use extended header idx to get specific data information
                 ext_header_idx = output['spike_events']['NEUEVWAV_HeaderIndices'][idx]
-                samples    = self.extended_headers[ext_header_idx]['SpikeWidthSamples']
+                samples = self.extended_headers[ext_header_idx]['SpikeWidthSamples']
                 dig_factor = self.extended_headers[ext_header_idx]['DigitizationFactor']
-                num_bytes  = self.extended_headers[ext_header_idx]['BytesPerWaveform']
-                if num_bytes <= 1:   data_type = np.int8
-                elif num_bytes == 2: data_type = np.int16
+                num_bytes = self.extended_headers[ext_header_idx]['BytesPerWaveform']
+                if num_bytes <= 1:
+                    data_type = np.int8
+                elif num_bytes == 2:
+                    data_type = np.int16
 
-				# If reading waveforms, read waveform data and populate the waveforms dictionary field 
+                # If reading waveforms, read waveform data and populate the waveforms dictionary field
                 if wave_read == 'read':
                     if idx == -1:
                         output['spike_events']['Waveforms'].append(
-                            [np.fromfile(file=self.datafile, dtype=data_type, count=samples).astype(np.int32) * dig_factor])
+                            [np.fromfile(file=self.datafile, dtype=data_type, count=samples).astype(
+                                np.int32) * dig_factor])
                     else:
                         output['spike_events']['Waveforms'][idx] = \
                             np.append(output['spike_events']['Waveforms'][idx],
-                                      [np.fromfile(file=self.datafile, dtype=data_type, count=samples).astype(np.int32) *
+                                      [np.fromfile(file=self.datafile, dtype=data_type, count=samples).astype(
+                                          np.int32) *
                                        dig_factor], axis=0)
                 # If not reading waveforms, skip bytes corresponding to the waveform data
                 elif wave_read == 'noread':
                     if idx == -1:
-                        self.datafile.seek(self.basic_header['BytesInDataPackets'] - 8,1)
+                        self.datafile.seek(self.basic_header['BytesInDataPackets'] - 8, 1)
                     else:
-                        self.datafile.seek(self.basic_header['BytesInDataPackets'] - 8,1)
+                        self.datafile.seek(self.basic_header['BytesInDataPackets'] - 8, 1)
 
             # For comment events
             elif packet_id == COMMENT_PACKET_ID:
@@ -587,15 +596,22 @@ class NevFile:
                 output['comments']['TimeStamps'].append(time_stamp)
 
                 char_set = unpack('B', self.datafile.read(1))[0]
-                if char_set == CHARSET_ANSI:  output['comments']['CharSet'].append('ANSI')
-                elif char_set == CHARSET_UTF: output['comments']['CharSet'].append('UTF-16')
-                elif char_set == CHARSET_ROI: output['comments']['CharSet'].append('NeuroMotive ROI')
-                else:                         output['comments']['CharSet'].append('error')
+                if char_set == CHARSET_ANSI:
+                    output['comments']['CharSet'].append('ANSI')
+                elif char_set == CHARSET_UTF:
+                    output['comments']['CharSet'].append('UTF-16')
+                elif char_set == CHARSET_ROI:
+                    output['comments']['CharSet'].append('NeuroMotive ROI')
+                else:
+                    output['comments']['CharSet'].append('error')
 
                 comm_flag = unpack('B', self.datafile.read(1))[0]
-                if comm_flag == COMM_RGBA:   output['comments']['Flag'].append('RGBA color code')
-                elif comm_flag == COMM_TIME: output['comments']['Flag'].append('timestamp')
-                else:                        output['comments']['Flag'].append('error')
+                if comm_flag == COMM_RGBA:
+                    output['comments']['Flag'].append('RGBA color code')
+                elif comm_flag == COMM_TIME:
+                    output['comments']['Flag'].append('timestamp')
+                else:
+                    output['comments']['Flag'].append('error')
 
                 output['comments']['Data'].append(unpack('<I', self.datafile.read(4))[0])
 
@@ -611,11 +627,11 @@ class NevFile:
                     output['video_sync_events'] = {'TimeStamps': [], 'VideoFileNum': [], 'VideoFrameNum': [],
                                                    'VideoElapsedTime_ms': [], 'VideoSourceID': []}
 
-                output['video_sync_events']['TimeStamps'].append(          time_stamp)
-                output['video_sync_events']['VideoFileNum'].append(        unpack('<H', self.datafile.read(2))[0])
-                output['video_sync_events']['VideoFrameNum'].append(       unpack('<I', self.datafile.read(4))[0])
-                output['video_sync_events']['VideoElapsedTime_ms'].append( unpack('<I', self.datafile.read(4))[0])
-                output['video_sync_events']['VideoSourceID'].append(       unpack('<I', self.datafile.read(4))[0])
+                output['video_sync_events']['TimeStamps'].append(time_stamp)
+                output['video_sync_events']['VideoFileNum'].append(unpack('<H', self.datafile.read(2))[0])
+                output['video_sync_events']['VideoFrameNum'].append(unpack('<I', self.datafile.read(4))[0])
+                output['video_sync_events']['VideoElapsedTime_ms'].append(unpack('<I', self.datafile.read(4))[0])
+                output['video_sync_events']['VideoSourceID'].append(unpack('<I', self.datafile.read(4))[0])
                 self.datafile.seek((self.basic_header['BytesInDataPackets'] - 20), 1)
 
             # For tracking event
@@ -626,11 +642,11 @@ class NevFile:
                     output['tracking_events'] = {'TimeStamps': [], 'ParentID': [], 'NodeID': [], 'NodeCount': [],
                                                  'PointCount': [], 'TrackingPoints': []}
 
-                output['tracking_events']['TimeStamps'].append( time_stamp)
-                output['tracking_events']['ParentID'].append(   unpack('<H', self.datafile.read(2))[0])
-                output['tracking_events']['NodeID'].append(     unpack('<H', self.datafile.read(2))[0])
-                output['tracking_events']['NodeCount'].append(  unpack('<H', self.datafile.read(2))[0])
-                output['tracking_events']['PointCount'].append( unpack('<H', self.datafile.read(2))[0])
+                output['tracking_events']['TimeStamps'].append(time_stamp)
+                output['tracking_events']['ParentID'].append(unpack('<H', self.datafile.read(2))[0])
+                output['tracking_events']['NodeID'].append(unpack('<H', self.datafile.read(2))[0])
+                output['tracking_events']['NodeCount'].append(unpack('<H', self.datafile.read(2))[0])
+                output['tracking_events']['PointCount'].append(unpack('<H', self.datafile.read(2))[0])
                 samples = (self.basic_header['BytesInDataPackets'] - 14) // 2
                 output['tracking_events']['TrackingPoints'].append(
                     np.fromfile(file=self.datafile, dtype=np.uint16, count=samples))
@@ -644,10 +660,14 @@ class NevFile:
 
                 output['button_trigger_events']['TimeStamps'].append(time_stamp)
                 trigger_type = unpack('<H', self.datafile.read(2))[0]
-                if trigger_type == UNDEFINED:      output['button_trigger_events']['TriggerType'].append('undefined')
-                elif trigger_type == BUTTON_PRESS: output['button_trigger_events']['TriggerType'].append('button press')
-                elif trigger_type == BUTTON_RESET: output['button_trigger_events']['TriggerType'].append('event reset')
-                else:                              output['button_trigger_events']['TriggerType'].append('error')
+                if trigger_type == UNDEFINED:
+                    output['button_trigger_events']['TriggerType'].append('undefined')
+                elif trigger_type == BUTTON_PRESS:
+                    output['button_trigger_events']['TriggerType'].append('button press')
+                elif trigger_type == BUTTON_RESET:
+                    output['button_trigger_events']['TriggerType'].append('event reset')
+                else:
+                    output['button_trigger_events']['TriggerType'].append('error')
                 self.datafile.seek((self.basic_header['BytesInDataPackets'] - 8), 1)
 
             # For configuration log event
@@ -659,16 +679,20 @@ class NevFile:
 
                 output['configuration_events']['TimeStamps'].append(time_stamp)
                 change_type = unpack('<H', self.datafile.read(2))[0]
-                if change_type == CHG_NORMAL:     output['configuration_events']['ConfigChangeType'].append('normal')
-                elif change_type == CHG_CRITICAL: output['configuration_events']['ConfigChangeType'].append('critical')
-                else:                             output['configuration_events']['ConfigChangeType'].append('error')
+                if change_type == CHG_NORMAL:
+                    output['configuration_events']['ConfigChangeType'].append('normal')
+                elif change_type == CHG_CRITICAL:
+                    output['configuration_events']['ConfigChangeType'].append('critical')
+                else:
+                    output['configuration_events']['ConfigChangeType'].append('error')
 
                 samples = self.basic_header['BytesInDataPackets'] - 8
                 output['configuration_events']['ConfigChanged'].append(unpack(('<' + str(samples) + 's'),
                                                                               self.datafile.read(samples))[0])
 
             # Otherwise, packet unknown, skip to next packet
-            else:  self.datafile.seek((self.basic_header['BytesInDataPackets'] - 6), 1)
+            else:
+                self.datafile.seek((self.basic_header['BytesInDataPackets'] - 6), 1)
 
         return output
 
@@ -685,7 +709,7 @@ class NevFile:
             if comments['CharSet'][i] == 'NeuroMotive ROI':
 
                 temp_data = pack('<I', comments['Data'][i])
-                roi   = unpack_from('<B', temp_data)[0]
+                roi = unpack_from('<B', temp_data)[0]
                 event = unpack_from('<B', temp_data, 1)[0]
 
                 # Determine the label of the region source
@@ -700,8 +724,10 @@ class NevFile:
                     roi_events['EnterTimeStamps'].append([])
                     roi_events['ExitTimeStamps'].append([])
 
-                if   event == ENTER_EVENT: roi_events['EnterTimeStamps'][idx].append(comments['TimeStamp'][i])
-                elif event == EXIT_EVENT:  roi_events['ExitTimeStamps'][idx].append(comments['TimeStamp'][i])
+                if event == ENTER_EVENT:
+                    roi_events['EnterTimeStamps'][idx].append(comments['TimeStamp'][i])
+                elif event == EXIT_EVENT:
+                    roi_events['ExitTimeStamps'][idx].append(comments['TimeStamp'][i])
 
         return roi_events
 
@@ -719,8 +745,8 @@ class NsxFile:
 
     def __init__(self, datafile=''):
 
-        self.datafile         = datafile
-        self.basic_header     = {}
+        self.datafile = datafile
+        self.basic_header = {}
         self.extended_headers = []
 
         # Run openfilecheck and open the file passed or allow user to browse to one
@@ -732,9 +758,9 @@ class NsxFile:
         # Extract basic and extended header information based on File Spec
         if self.basic_header['FileTypeID'] == 'NEURALSG':
             self.basic_header.update(processheaders(self.datafile, nsx_header_dict['basic_21']))
-            self.basic_header['FileSpec']            = '2.1'
+            self.basic_header['FileSpec'] = '2.1'
             self.basic_header['TimeStampResolution'] = 30000
-            self.basic_header['BytesInHeader']       = 32 + 4 * self.basic_header['ChannelCount']
+            self.basic_header['BytesInHeader'] = 32 + 4 * self.basic_header['ChannelCount']
             shape = (1, self.basic_header['ChannelCount'])
             self.basic_header['ChannelID'] = \
                 list(np.fromfile(file=self.datafile, dtype=np.uint32,
@@ -767,30 +793,30 @@ class NsxFile:
 
         # Safety checks
         start_time_s = check_starttime(start_time_s)
-        data_time_s  = check_datatime(data_time_s)
-        downsample   = check_downsample(downsample)
-        elec_ids     = check_elecid(elec_ids)
+        data_time_s = check_datatime(data_time_s)
+        downsample = check_downsample(downsample)
+        elec_ids = check_elecid(elec_ids)
 
         # initialize parameters
-        output                          = dict()
-        output['elec_ids']              = elec_ids
-        output['start_time_s']          = float(start_time_s)
-        output['data_time_s']           = data_time_s
-        output['downsample']            = downsample
-        output['data']                  = []
-        output['data_headers']          = []
+        output = dict()
+        output['elec_ids'] = elec_ids
+        output['start_time_s'] = float(start_time_s)
+        output['data_time_s'] = data_time_s
+        output['downsample'] = downsample
+        output['data'] = []
+        output['data_headers'] = []
         output['ExtendedHeaderIndices'] = []
 
         datafile_samp_per_sec = self.basic_header['TimeStampResolution'] / self.basic_header['Period']
-        data_pt_size          = self.basic_header['ChannelCount'] * DATA_BYTE_SIZE
-        elec_id_indices       = []
-        front_end_idxs        = []
-        analog_input_idxs     = []
-        front_end_idx_cont    = True
+        data_pt_size = self.basic_header['ChannelCount'] * DATA_BYTE_SIZE
+        elec_id_indices = []
+        front_end_idxs = []
+        analog_input_idxs = []
+        front_end_idx_cont = True
         analog_input_idx_cont = True
-        hit_start             = False
-        hit_stop              = False
-        d_ptr                 = 0
+        hit_start = False
+        hit_stop = False
+        d_ptr = 0
 
         # Move file position to start of datafile (if read before, may not be here anymore)
         self.datafile.seek(self.basic_header['BytesInHeader'], 0)
@@ -799,24 +825,29 @@ class NsxFile:
         if self.basic_header['FileSpec'] == '2.1':
             output['elec_ids'] = self.basic_header['ChannelID']
             output['data_headers'].append({})
-            output['data_headers'][0]['Timestamp']     = TIMESTAMP_NULL_21
+            output['data_headers'][0]['Timestamp'] = TIMESTAMP_NULL_21
             output['data_headers'][0]['NumDataPoints'] = (ospath.getsize(self.datafile.name) - self.datafile.tell()) \
                                                          // (DATA_BYTE_SIZE * self.basic_header['ChannelCount'])
         else:
             output['elec_ids'] = [d['ElectrodeID'] for d in self.extended_headers]
 
         # Determine start and stop index for data
-        if start_time_s == START_TIME_DEF: start_idx = START_OFFSET_MIN
-        else:                              start_idx = int(round(start_time_s * datafile_samp_per_sec))
-        if data_time_s == DATA_TIME_DEF:   stop_idx  = STOP_OFFSET_MIN
-        else:                              stop_idx  = int(round((start_time_s + data_time_s) * datafile_samp_per_sec))
+        if start_time_s == START_TIME_DEF:
+            start_idx = START_OFFSET_MIN
+        else:
+            start_idx = int(round(start_time_s * datafile_samp_per_sec))
+        if data_time_s == DATA_TIME_DEF:
+            stop_idx = STOP_OFFSET_MIN
+        else:
+            stop_idx = int(round((start_time_s + data_time_s) * datafile_samp_per_sec))
 
         # If a subset of electrodes is requested, error check, determine elec indices, and reduce headers
         if elec_ids != ELEC_ID_DEF:
             elec_ids = check_dataelecid(elec_ids, output['elec_ids'])
-            if not elec_ids: return output
+            if not elec_ids:
+                return output
             else:
-                elec_id_indices    = [output['elec_ids'].index(e) for e in elec_ids]
+                elec_id_indices = [output['elec_ids'].index(e) for e in elec_ids]
                 output['elec_ids'] = elec_ids
         num_elecs = len(output['elec_ids'])
 
@@ -827,11 +858,13 @@ class NsxFile:
                            if d["ElectrodeID"] == output['elec_ids'][i])
                 output['ExtendedHeaderIndices'].append(idx)
 
-                if self.extended_headers[idx]['PhysicalConnector'] < 5: front_end_idxs.append(i)
-                else:                                                   analog_input_idxs.append(i)
+                if self.extended_headers[idx]['PhysicalConnector'] < 5:
+                    front_end_idxs.append(i)
+                else:
+                    analog_input_idxs.append(i)
 
             # Determine if front_end_idxs and analog_idxs are contiguous (default = False)
-            if any(np.diff(np.array(front_end_idxs)) != 1):     front_end_idx_cont    = False
+            if any(np.diff(np.array(front_end_idxs)) != 1):     front_end_idx_cont = False
             if any(np.diff(np.array(analog_input_idxs)) != 1):  analog_input_idx_cont = False
 
         # Pre-allocate output data based on data packet info (timestamp + num pts) and/or data_time_s
@@ -839,12 +872,12 @@ class NsxFile:
         # 1a) For file spec > 2.1, get to last data packet quickly to determine total possible output length
         # 2) If possible output length is bigger than requested, set output based on requested
         if self.basic_header['FileSpec'] == '2.1':
-            timestamp    = TIMESTAMP_NULL_21
+            timestamp = TIMESTAMP_NULL_21
             num_data_pts = output['data_headers'][0]['NumDataPoints']
         else:
             while self.datafile.tell() != ospath.getsize(self.datafile.name):
                 self.datafile.seek(1, 1)  # skip header byte value
-                timestamp    = unpack('<I', self.datafile.read(4))[0]
+                timestamp = unpack('<I', self.datafile.read(4))[0]
                 num_data_pts = unpack('<I', self.datafile.read(4))[0]
                 self.datafile.seek(num_data_pts * self.basic_header['ChannelCount'] * DATA_BYTE_SIZE, 1)
 
@@ -857,11 +890,12 @@ class NsxFile:
 
         # If data output is bigger than available, let user know this is too big and they must request at least one of:
         # subset of electrodes, subset of data, or use savensxsubset to smaller file sizes, otherwise, pre-allocate data
-        try:   output['data'] = np.zeros((total_samps, num_elecs), dtype=np.float32)
+        try:
+            output['data'] = np.zeros((total_samps, num_elecs), dtype=np.float32)
         except MemoryError as err:
             err.args += (" Output data size requested is larger than available memory. Use the parameters\n"
                          "              for getdata(), e.g., 'elec_ids', to request a subset of the data or use\n"
-                         "              NsxFile.savesubsetnsx() to create subsets of the main nsx file\n", )
+                         "              NsxFile.savesubsetnsx() to create subsets of the main nsx file\n",)
             raise
 
         # Reset file position to start of data header #1, loop through all data packets, process header, and add data
@@ -908,8 +942,10 @@ class NsxFile:
                 # if we've reached the end of file, break, otherwise continue to next packet
                 if start_offset > output['data_headers'][-1]['NumDataPoints']:
                     self.datafile.seek(output['data_headers'][-1]['NumDataPoints'] * data_pt_size, 1)
-                    if self.datafile.tell() == ospath.getsize(self.datafile.name): break
-                    else: continue
+                    if self.datafile.tell() == ospath.getsize(self.datafile.name):
+                        break
+                    else:
+                        continue
 
                 else:
                     # If the start_offset is before the current packet, check to ensure that stop_index
@@ -921,9 +957,9 @@ class NsxFile:
                         else:
                             print("\nFirst data packet requested begins at t = {0:.6f} s, "
                                   "initial section padded with zeros".format(
-                                   output['data_headers'][-1]['Timestamp'] / self.basic_header['TimeStampResolution']))
+                                output['data_headers'][-1]['Timestamp'] / self.basic_header['TimeStampResolution']))
                             start_offset = START_OFFSET_MIN
-                            d_ptr        = (timestamp_sample - start_idx) // downsample
+                            d_ptr = (timestamp_sample - start_idx) // downsample
                     hit_start = True
 
             # for all other packets
@@ -931,12 +967,13 @@ class NsxFile:
                 # check to see if padded data is needed, including hitting the stop index
                 if STOP_OFFSET_MIN < stop_idx < timestamp_sample:
                     print("\nSection padded with zeros due to file pausing")
-                    hit_stop = True;  break
+                    hit_stop = True;
+                    break
 
                 elif (timestamp_sample - start_idx) > d_ptr:
                     print("\nSection padded with zeros due to file pausing")
                     start_offset = START_OFFSET_MIN
-                    d_ptr        = (timestamp_sample - start_idx) // downsample
+                    d_ptr = (timestamp_sample - start_idx) // downsample
 
             # Set number of samples to be read based on if start/stop sample is during data packet
             if STOP_OFFSET_MIN < stop_idx <= (timestamp_sample + output['data_headers'][-1]['NumDataPoints']):
@@ -954,24 +991,28 @@ class NsxFile:
             # Extract data no more than 1 GB at a time (or based on DATA_PAGING_SIZE)
             # Determine shape of data to map based on file sizing and position, then map it
             downsample_data_size = data_pt_size * downsample
-            max_length           = (DATA_PAGING_SIZE // downsample_data_size) * downsample_data_size
-            num_loops            = int(ceil(total_pts * data_pt_size / max_length))
+            max_length = (DATA_PAGING_SIZE // downsample_data_size) * downsample_data_size
+            num_loops = int(ceil(total_pts * data_pt_size / max_length))
 
             for loop in range(num_loops):
                 if loop == 0:
-                    if num_loops == 1:  num_pts = total_pts
-                    else:               num_pts = max_length // data_pt_size
+                    if num_loops == 1:
+                        num_pts = total_pts
+                    else:
+                        num_pts = max_length // data_pt_size
 
                 else:
                     file_offset += max_length
-                    if loop == (num_loops - 1):  num_pts = ((total_pts * data_pt_size) % max_length) // data_pt_size
-                    else:                        num_pts = max_length // data_pt_size
-                        
+                    if loop == (num_loops - 1):
+                        num_pts = ((total_pts * data_pt_size) % max_length) // data_pt_size
+                    else:
+                        num_pts = max_length // data_pt_size
+
                 if num_loops != 1:  print('Data extraction requires paging: {0} of {1}'.format(loop + 1, num_loops))
 
                 num_pts = int(num_pts)
-                shape   = (num_pts, self.basic_header['ChannelCount'])
-                mm      = np.memmap(self.datafile, dtype=np.int16, mode='r', offset=file_offset, shape=shape)
+                shape = (num_pts, self.basic_header['ChannelCount'])
+                mm = np.memmap(self.datafile, dtype=np.int16, mode='r', offset=file_offset, shape=shape)
 
                 # append data based on downsample slice and elec_ids indexing, then clear memory map
                 if downsample != 1: mm = mm[::downsample]
@@ -998,7 +1039,8 @@ class NsxFile:
         output['data'] = output['data'].transpose()
 
         # All data must be scaled based on scaling factors from extended header
-        if self.basic_header['FileSpec'] == '2.1':  output['data'] *= UV_PER_BIT_21
+        if self.basic_header['FileSpec'] == '2.1':
+            output['data'] *= UV_PER_BIT_21
         else:
             if front_end_idxs:
                 if front_end_idx_cont:
@@ -1017,7 +1059,7 @@ class NsxFile:
                         output['data'][i] *= getdigfactor(self.extended_headers, output['ExtendedHeaderIndices'][i])
 
         # Update parameters based on data extracted
-        output['samp_per_s']  = float(datafile_samp_per_sec / downsample)
+        output['samp_per_s'] = float(datafile_samp_per_sec / downsample)
         output['data_time_s'] = len(output['data'][0]) / output['samp_per_s']
 
         return output
@@ -1039,23 +1081,27 @@ class NsxFile:
         """
 
         # Initializations
-        elec_id_indices      = []
-        file_num             = 1
-        pausing              = False
+        elec_id_indices = []
+        file_num = 1
+        pausing = False
         datafile_datapt_size = self.basic_header['ChannelCount'] * DATA_BYTE_SIZE
         self.datafile.seek(0, 0)
 
         # Run electrode id checks and set num_elecs
         elec_ids = check_elecid(elec_ids)
-        if self.basic_header['FileSpec'] == '2.1': all_elec_ids = self.basic_header['ChannelID']
-        else:                                      all_elec_ids = [x['ElectrodeID'] for x in self.extended_headers]
+        if self.basic_header['FileSpec'] == '2.1':
+            all_elec_ids = self.basic_header['ChannelID']
+        else:
+            all_elec_ids = [x['ElectrodeID'] for x in self.extended_headers]
 
         if elec_ids == ELEC_ID_DEF:
             elec_ids = all_elec_ids
         else:
             elec_ids = check_dataelecid(elec_ids, all_elec_ids)
-            if not elec_ids: return None
-            else:            elec_id_indices = [all_elec_ids.index(x) for x in elec_ids]
+            if not elec_ids:
+                return None
+            else:
+                elec_id_indices = [all_elec_ids.index(x) for x in elec_ids]
 
         num_elecs = len(elec_ids)
 
@@ -1069,19 +1115,22 @@ class NsxFile:
                 file_size += 32 + 4 * num_elecs
             else:
                 file_size += NSX_BASIC_HEADER_BYTES_22 + NSX_EXT_HEADER_BYTES_22 * num_elecs + 5
-            print("\nBased on timing request, file size will be {0:d} Mb".format(int(file_size / 1024**2)))
+            print("\nBased on timing request, file size will be {0:d} Mb".format(int(file_size / 1024 ** 2)))
         elif file_size:
             file_size = check_filesize(file_size)
 
         # Create and open subset file as writable binary, if it already exists ask user for overwrite permission
         file_name, file_ext = ospath.splitext(self.datafile.name)
-        if file_suffix:  file_name += '_' + file_suffix
-        else:            file_name += '_subset'
+        if file_suffix:
+            file_name += '_' + file_suffix
+        else:
+            file_name += '_subset'
 
         if ospath.isfile(file_name + "_000" + file_ext):
             if 'y' != input("\nFile '" + file_name.split('/')[-1] + "_xxx" + file_ext +
-                                    "' already exists, overwrite [y/n]: "):
-                print("\nExiting, no overwrite, returning None"); return None
+                            "' already exists, overwrite [y/n]: "):
+                print("\nExiting, no overwrite, returning None");
+                return None
             else:
                 print("\n*** Overwriting existing subset files ***")
 
@@ -1116,7 +1165,7 @@ class NsxFile:
             self.datafile.seek(4, 1)
 
             for i in range(len(self.extended_headers)):
-                h_type  = self.datafile.read(2)
+                h_type = self.datafile.read(2)
                 chan_id = self.datafile.read(2)
                 if unpack('<H', chan_id)[0] in elec_ids:
                     subset_file.write(h_type)
@@ -1133,10 +1182,10 @@ class NsxFile:
                 packet_pts = (ospath.getsize(self.datafile.name) - self.datafile.tell()) \
                              / (DATA_BYTE_SIZE * self.basic_header['ChannelCount'])
             else:
-                header_binary     = self.datafile.read(1)
-                timestamp_binary  = self.datafile.read(4)
+                header_binary = self.datafile.read(1)
+                timestamp_binary = self.datafile.read(4)
                 packet_pts_binary = self.datafile.read(4)
-                packet_pts        = unpack('<I', packet_pts_binary)[0]
+                packet_pts = unpack('<I', packet_pts_binary)[0]
                 if packet_pts == 0: continue
 
                 subset_file.write(header_binary)
@@ -1144,18 +1193,20 @@ class NsxFile:
                 subset_file.write(packet_pts_binary)
 
             # get current file position and set loop parameters
-            datafile_pos        = self.datafile.tell()
-            file_offset         = datafile_pos
-            mm_length           = (DATA_PAGING_SIZE // datafile_datapt_size) * datafile_datapt_size
-            num_loops           = int(ceil(packet_pts * datafile_datapt_size / mm_length))
-            packet_read_pts     = 0
+            datafile_pos = self.datafile.tell()
+            file_offset = datafile_pos
+            mm_length = (DATA_PAGING_SIZE // datafile_datapt_size) * datafile_datapt_size
+            num_loops = int(ceil(packet_pts * datafile_datapt_size / mm_length))
+            packet_read_pts = 0
             subset_file_pkt_pts = 0
 
             # Determine shape of data to map based on file sizing and position, map it, then append to file
             for loop in range(num_loops):
                 if loop == 0:
-                    if num_loops == 1:  num_pts = packet_pts
-                    else:               num_pts = mm_length // datafile_datapt_size
+                    if num_loops == 1:
+                        num_pts = packet_pts
+                    else:
+                        num_pts = mm_length // datafile_datapt_size
 
                 else:
                     file_offset += mm_length
@@ -1174,15 +1225,17 @@ class NsxFile:
 
                     # number of points we can possibly write to current subset file
                     pts_can_add = int((file_size - subset_file.tell()) // (num_elecs * DATA_BYTE_SIZE)) + 1
-                    stop_idx    = start_idx + pts_can_add
+                    stop_idx = start_idx + pts_can_add
 
                     # If the pts remaining are less than exist in the data, we'll need an additional subset file
                     while pts_can_add < num_pts:
 
                         # Write pts to disk, set old file name, update pts in packet, and close last subset file
-                        if elec_id_indices:  subset_file.write(np.array(mm[start_idx:stop_idx]).tobytes())
-                        else:                subset_file.write(mm[start_idx:stop_idx])
-                        prior_file_name    = subset_file.name
+                        if elec_id_indices:
+                            subset_file.write(np.array(mm[start_idx:stop_idx]).tobytes())
+                        else:
+                            subset_file.write(mm[start_idx:stop_idx])
+                        prior_file_name = subset_file.name
                         prior_file_pkt_pts = subset_file_pkt_pts + pts_can_add
                         subset_file.close()
 
@@ -1193,13 +1246,16 @@ class NsxFile:
                         #    2) create data packet header with new timestamp and num data points (dummy numpts value)
                         #    3) overwrite the number of data points in the old file last header packet with true value
                         prior_file = open(prior_file_name, 'rb+')
-                        if file_num < 10:          numstr = "_00" + str(file_num)
-                        elif 10 <= file_num < 100: numstr = "_0" + str(file_num)
-                        else:                      numstr = "_" + str(file_num)
+                        if file_num < 10:
+                            numstr = "_00" + str(file_num)
+                        elif 10 <= file_num < 100:
+                            numstr = "_0" + str(file_num)
+                        else:
+                            numstr = "_" + str(file_num)
                         subset_file = open(file_name + numstr + file_ext, 'wb')
                         print("Writing subset file: " + ospath.split(subset_file.name)[1])
 
-                        if self.basic_header['FileSpec']  == '2.1':
+                        if self.basic_header['FileSpec'] == '2.1':
                             subset_file.write(prior_file.read(32 + 4 * num_elecs))
                         else:
                             subset_file.write(prior_file.read(bytes_in_headers))
@@ -1216,27 +1272,29 @@ class NsxFile:
 
                         # Close old file and update parameters
                         prior_file.close()
-                        packet_read_pts     += pts_can_add
-                        start_idx           += pts_can_add
-                        num_pts             -= pts_can_add
-                        file_num            += 1
-                        subset_file_pkt_pts  = 0
-                        pausing              = False
+                        packet_read_pts += pts_can_add
+                        start_idx += pts_can_add
+                        num_pts -= pts_can_add
+                        file_num += 1
+                        subset_file_pkt_pts = 0
+                        pausing = False
 
                         pts_can_add = int((file_size - subset_file.tell()) // (num_elecs * DATA_BYTE_SIZE)) + 1
-                        stop_idx    = start_idx + pts_can_add
+                        stop_idx = start_idx + pts_can_add
 
                 # If no additional file needed, write remaining data to disk, update parameters, and clear memory map
-                if elec_id_indices:  subset_file.write(np.array(mm[start_idx:]).tobytes())
-                else:                subset_file.write(mm[start_idx:])
-                packet_read_pts     += num_pts
+                if elec_id_indices:
+                    subset_file.write(np.array(mm[start_idx:]).tobytes())
+                else:
+                    subset_file.write(mm[start_idx:])
+                packet_read_pts += num_pts
                 subset_file_pkt_pts += num_pts
                 del mm
 
             # Update num_pts header position for each packet, while saving last packet num_pts_header_pos for later
             if self.basic_header['FileSpec'] != '2.1':
                 curr_hdr_num_pts_pos = num_pts_header_pos
-                num_pts_header_pos  += 4 + subset_file_pkt_pts * num_elecs * DATA_BYTE_SIZE + 5
+                num_pts_header_pos += 4 + subset_file_pkt_pts * num_elecs * DATA_BYTE_SIZE + 5
 
             # Because memory map resets the file position, reset position in datafile
             datafile_pos += self.basic_header['ChannelCount'] * packet_pts * DATA_BYTE_SIZE
