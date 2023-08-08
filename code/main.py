@@ -57,16 +57,19 @@ class NEVSpikes:
             self.data["spikes"] = {}
             self.data["meta"] = {}
             for k, v in data["spike_events"].items():
-                self.data["spikes"][k] = np.array(v, dtype=int)
+                self.data["spikes"][k] = np.array(v, dtype=int).tolist()
             for k, v in data["digital_events"].items():
-                self.data["meta"][k] = np.array(v, dtype=int)
+                self.data["meta"][k] = np.array(v, dtype=int).tolist()
         except:
             return False
         return True
 
 
 if __name__ == '__main__':
-    path = 'D:/Users/lucian/Desktop/MyProject/SpikePyLab/data/BlackNeuroTech/pat01/datafile001-sorted.nev'
+    work_root = os.getcwd()
+    data_path = ["..", "data", "BlackNeuroTech", "pat01", "datafile001-sorted.nev"]
+    path = os.path.join(work_root, *data_path)
+    print(path)
     sp = NEVSpikes(path)
 
     np.array([1, 2, 3], dtype=int)
