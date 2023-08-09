@@ -35,6 +35,6 @@ def read():
 
 
 if __name__ == '__main__':
-    path = 'D:/Users/lucian/Desktop/MyProject/SpikePyLab/data/BlackNeuroTech/pat01/datafile001-sorted.mat'
+    path = '/data/BlackNeuroTech/pat01/datafile001-sorted.mat'
     write()
     print(read())
