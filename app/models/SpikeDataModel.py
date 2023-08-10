@@ -1,7 +1,9 @@
 from typing import List
 
-from app.models.neuron import Neuron
-from app.models.nevSpikes import NEVSpikes
+import numpy as np
+
+from app.models.NeuronModel import Neuron
+from app.utils.blackneurotech.brpylib import NevFile
 
 
 class RawSpikeData:
@@ -16,7 +18,12 @@ class RawSpikeData:
     """
     neuron_table: List[Neuron]
 
-    def __init__(self):
+    def __init__(self, path: str):
+        # 1. nev 文件路径 (假定 path 是正确的 nev 文件路径)
+        self.path = path
+        # 2. nev 原始数据
+        self.data = {}
+        # 3. 提取变量
         self.header = {}
         self.spike_stamp = []
         self.spike_unit = []
@@ -24,30 +31,43 @@ class RawSpikeData:
         self.spike_wave = []
         self.event_stamp = []
         self.event_marker = []
-        # 1. 神经元总数(此处我们假设了 每个电极记录到的神经元应该是互不相同的, 也即已进行了锋值排序)
+        # 4. 数据预处理 - 扁平数据结构化.
+        # 4-1. 神经元总数(此处我们假设了 每个电极记录到的神经元应该是互不相同的, 也即已进行了锋值排序)
         self.neuron_num = 0
-        # 2. 所有电极记录到的所有神经元在全部的实验时间内发放的总次数
+        # 4-2. 所有电极记录到的所有神经元在全部的实验时间内发放的总次数
         self.total_firing_counts = 0
-        # 3. channel - unit 对应表
+        # 4-3. channel - unit 对应表
         self.channel_unit_table = {}
-        # 4. unit - Neuron 对应表
+        # 4-4. unit - Neuron 对应表
         self.neuron_table = []
-        # 5. 其他变量
+        # 4-5. 其他变量
         self.channel_num = 0
 
-    def load(self, nev: NEVSpikes):
-        self.spike_stamp = nev.data["spikes"]["TimeStamps"]
-        self.spike_unit = nev.data["spikes"]["Unit"]
-        self.spike_chanel = nev.data["spikes"]["Channel"]
-        self.spike_wave = nev.data["spikes"]["Waveforms"]
-        self.event_stamp = nev.data["events"]["TimeStamps"]
-        self.event_marker = nev.data["events"]["UnparsedData"]
-        self.header = nev.data["header"]
-        self.header['file_name'] = nev.file_name
-        self.header['file_root'] = nev.file_root
-        self.header['file_suffix'] = nev.file_suffix
-        self.header['base_file_name'] = nev.base_file_name
-        self.header['file_path'] = nev.path
+    def readNEV(self):
+        try:
+            meta = NevFile(self.path)
+            data = meta.getdata()
+            self.data["spikes"] = {}
+            self.data["events"] = {}
+            for k, v in data["spike_events"].items():
+                self.data["spikes"][k] = np.array(v, dtype=int).tolist()
+            for k, v in data["digital_events"].items():
+                self.data["events"][k] = np.array(v, dtype=int).tolist()
+            self.data["header"] = meta.basic_header
+            self.data["header"]["TimeOrigin"] = str(self.data["header"]["TimeOrigin"])
+            self.load()
+        except:
+            return False
+        return True
+
+    def load(self):
+        self.spike_stamp = self.data["spikes"]["TimeStamps"]
+        self.spike_unit = self.data["spikes"]["Unit"]
+        self.spike_chanel = self.data["spikes"]["Channel"]
+        self.spike_wave = self.data["spikes"]["Waveforms"]
+        self.event_stamp = self.data["events"]["TimeStamps"]
+        self.event_marker = self.data["events"]["UnparsedData"]
+        self.header = self.data["header"]
 
     # 目前 spike_xx 和 event_xx 还都是扁平的数据结构, 需要使其更加结构化
     # 例如支持检索具体某个神经元的发放(时刻和波形), 检索某电极(几个神经元)的发放
@@ -97,6 +117,18 @@ class RawSpikeData:
             st = self.spike_stamp[i]
             idx = self.channel_unit_table[ch][un]
             self.neuron_table[idx].append(wv, st)
+        # 封装必要数据
+        self.header["channel_unit_table"] = self.channel_unit_table
+        self.header["channel_num"] = self.channel_num
+        self.header["neuron_num"] = self.neuron_num
 
-    def get_data_dict(self) -> dict:
-        pass
+    def get_data_dict(self):
+        spikes = {
+            "header": self.header,
+            "data": self.neuron_table
+        }
+        events = {
+            "event_stamp": self.event_stamp,
+            "event_marker": self.event_marker
+        }
+        return spikes, events
